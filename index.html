@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Face Mash</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
+</head>
+<body>
+    <input id="input-images" type="file" onchange="LoadImagesEventAsync()" multiple>
+    <div class="row" style="height: 300px">
+        <div id="graph" class="col-6"></div>
+        <pre id="log" class="col-6" style="overflow-y: scroll;"></pre>
+    </div>
+    <div class="row">
+        <div class="col-3">
+            <ol id="list"></ol>
+        </div>
+        <div id="chooser" class="col-9 row">
+            <img id="img-a" class="col-6" style="cursor:pointer" width="100%"/>
+            <img id="img-b" class="col-6" style="cursor:pointer" width="100%"/>
+        </div>
+    </div>
+
+    <script>
+        const players = [];
+
+        function DeepCopyPlayers(){
+            const newPlayers = [];
+            for (const player of players){
+                newPlayers.push({
+                    id: player.id,
+                    img: player.img,
+                    better: new Set(player.better),
+                    worse: new Set(player.worse),
+                });
+            }
+            return newPlayers;
+        }
+
+        function Log(text){
+            document.querySelector('#log').textContent += `${text}\n`;
+        }
+
+        function LoadImageDataAsync(fileObject){ 
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = function () {
+                    resolve(reader.result);
+                }
+                reader.readAsDataURL(fileObject);
+            });
+        }
+
+        async function LoadImagesEventAsync(){
+            const fileObjects = [...document.querySelector('#input-images').files];
+            const images = await Promise.all(fileObjects.map((file) => LoadImageDataAsync(file)));
+
+            images.forEach((imageUrl) => {
+                players.push({
+                    id: Math.floor(Math.random()*1e16),
+                    img: imageUrl,
+                    better: new Set(),
+                    worse: new Set(),
+                });
+            });
+
+            ShowScoreBoard();
+            ShowGraph();
+            ShowRanking(players[0], players[1]);
+        }
+
+        function ShowScoreBoard(){
+            const scoreBoard = document.querySelector('#list');
+
+            // clean
+            let firstChild;
+            while (firstChild = scoreBoard.firstChild){
+                scoreBoard.removeChild(firstChild);
+            }
+
+            // sort players - let's just skip the heart of the algorithm for now 
+            const copyOfPlayers = DeepCopyPlayers().sort((playerA, playerB) => {
+                const countA = (GetLongestBetterChain(playerA).length + 1) * (GetLongestWorseChain(playerB).length + 1);
+                const countB = (GetLongestBetterChain(playerB).length + 1) * (GetLongestWorseChain(playerA).length + 1);
+
+                return countA - countB;
+            });
+            
+            // show
+            copyOfPlayers.forEach((player) => {
+                const listItem = document.createElement('li');
+                const label = document.createTextNode(` id: ${player.id}`);
+                const avatar = document.createElement('img');
+                avatar.src = player.img;
+                avatar.width = 50;
+                listItem.appendChild(avatar);
+                listItem.appendChild(label);
+                
+                scoreBoard.appendChild(listItem);
+            });
+        }
+
+        function GetLongestBetterChain(player){
+            return GetLongestChain(player, 'better');
+        }
+
+        function GetLongestWorseChain(player){
+            return GetLongestChain(player, 'worse');
+        }
+
+        function GetLongestChain(player, type = 'better'){
+            const chains = [];
+            const visitedPlayers = players.reduce((all, curr) => {
+                all[curr.id] = false;
+                return all;
+            }, {});
+            const visitor = (visitable, chain) => {
+                if (chain.length > 0 && visitable.id === player.id){
+                    // avoid overflow on cycling graph
+                    return;
+                }
+                if (visitedPlayers[visitable.id]){
+                    return;
+                }
+                else {
+                    visitedPlayers[visitable.id] = true;
+                }
+                if (visitable[type].size === 0){
+                    chains.push(chain);
+                    for (const id in visitedPlayers){
+                        visitedPlayers[id] = id !== visitable.id;
+                    }
+                    return;
+                }
+                for (const typeId of visitable[type]){
+                    const typePlayer = players.find((p) => p.id === typeId);   
+                    visitor(typePlayer, [...chain, visitable.id]);
+                }
+            }
+            visitor(player, []);
+
+            let longestChain = chains[0] || [];
+            for (const chain of chains){
+                if  (chain.length > longestChain.length){
+                    longestChain = chain;
+                }
+            }
+            return longestChain;
+        }
+
+        function ShowGraph(){
+            const graph = document.querySelector('#graph');
+            const nodes = [];
+            const edges = [];
+
+            players.forEach((player) => {
+                nodes.push({
+                    id: player.id,
+                    shape: 'circularImage',
+                    image: player.img,
+                });
+                player.better.forEach((betterPlayerId) => {
+                    edges.push({
+                        from: player.id,
+                        to: betterPlayerId,
+                        arrows: 'to',
+                    });
+                });
+            });
+
+            const data = {
+                nodes: nodes,
+                edges: edges
+            };
+            const options = {
+                nodes: {
+                borderWidth:4,
+                size:30,
+                color: {
+                    border: '#222222',
+                    background: '#666666'
+                },
+                    font:{color:'#eeeeee'}
+                },
+                edges: {
+                    color: 'lightgray'
+                }
+            };
+
+            if (this.network){
+                this.network.setData(data);
+            }
+            else {
+                this.network = new vis.Network(graph, data, options);
+            }
+        }
+
+        function ShowRanking(playerA, playerB){
+            const imgA = document.querySelector('#img-a');
+            const imgB = document.querySelector('#img-b');
+
+            imgA.src =  playerA.img;
+            imgA.onclick = () => UpdateRanking(playerA, playerB);
+            imgB.src =  playerB.img;
+            imgB.onclick = () => UpdateRanking(playerB, playerA);
+
+            this.round = (this.round || 0) + 1;
+            Log(`Show ranking for round: ${this.round}`);
+        }
+
+        function UpdateRanking(winner, loser){
+            
+            // mark that the winner is better
+            loser.better.add(winner.id);
+            winner.worse.add(loser.id);
+
+            // stop if we found a complete sort
+            const isFullyOrdered = IsFullyOrdered();
+            if (isFullyOrdered){
+                ShowGraph();
+                ShowScoreBoard();
+                document.querySelector('#chooser').style.display = 'none';
+                return;
+            }
+
+            // generate new ranking
+            let playersCopy = players
+                .map((player) => {
+                    return {
+                        connectionCount: player.better.size + player.worse.size,
+                        obj: player,
+                    };
+                }).sort((playerA, playerB) => {
+                    return playerA.connectionCount - playerB.connectionCount;
+                });
+
+            const playersGroupedByConnectionCount = GroupBy(playersCopy, (player) => {
+                return player.connectionCount;
+            });
+            let lowestCount = playersCopy[0].connectionCount;
+            for (const connectionCount in playersGroupedByConnectionCount){
+                if ((+connectionCount) < lowestCount && 
+                    playersGroupedByConnectionCount[connectionCount].length >= 2
+                ){
+                    lowestCount = +connectionCount;
+                }
+            }
+            playersCopy = playersCopy.filter((copy) => copy.connectionCount === lowestCount);
+            const randA = Math.floor(Math.random()*playersCopy.length);
+            const randB = Math.floor(Math.random()*playersCopy.length);
+            const nextA = players.find((player) => player.id === playersCopy[randA].obj.id);
+            const nextB = players.find((player) => player.id === playersCopy[randB].obj.id);
+
+            ShowRanking(nextA, nextB);
+            ShowGraph();
+            ShowScoreBoard();
+        }
+
+        function IsFullyOrdered(){
+            // const isConnected = IsConnectedGraph();
+            const isFullCycle = IsFullCycle();
+
+            if (isFullCycle){
+                return true;
+            }
+
+            return false;
+        }
+
+        function IsConnectedGraph(){
+            const visitedPlayers = players.reduce((all, curr) => {
+                all[curr.id] = false;
+                return all;
+            }, {});
+            const visitPlayer = (player) => {
+                if (visitedPlayers[player.id]){
+                    return;
+                }
+                else {
+                    visitedPlayers[player.id] = true;
+                }
+
+                for (const betterId of player.better){
+                    const betterPlayer = players.find((p) => p.id === betterId);
+                    visitPlayer(betterPlayer);
+                }
+                for (const worseId of player.worse){
+                    const worsePlayer = players.find((p) => p.id === worseId);
+                    visitPlayer(worsePlayer);
+                }
+            };
+            visitPlayer(players[0]);
+            const isConnectedGraph = Object.values(visitedPlayers).every((v) => v);
+            return isConnectedGraph;
+        }
+
+        function IsFullCycle(){
+            const playersGraphData = players.reduce((all, curr) => {
+                all[curr.id] = {
+                    id: curr.id,
+                    cycles: [],
+                };
+                return all;
+            }, {});
+
+            for (const player of players){
+                const visitedPlayers = players.reduce((all, curr) => {
+                    all[curr.id] = false;
+                    return all;
+                }, {});
+                const visitPlayer = (visitedPlayer, chain) => {
+                    if (visitedPlayers[visitedPlayer.id]){
+                        if (visitedPlayer.id === player.id){
+                            playersGraphData[visitedPlayer.id].cycles.push(chain);
+                        }
+                        return;
+                    }
+                    else {
+                        visitedPlayers[visitedPlayer.id] = true;
+                    }
+
+                    for (const betterId of visitedPlayer.better){
+                        const betterPlayer = players.find((p) => p.id === betterId);
+                        visitPlayer(betterPlayer, [...chain, betterId]);
+                    }
+                    for (const worseId of visitedPlayer.worse){
+                        const worsePlayer = players.find((p) => p.id === worseId);
+                        visitPlayer(worsePlayer, [...chain, worseId]);
+                    }
+                };
+                visitPlayer(player, []);
+            }
+
+            const playersGraphDataArray = Object.values(playersGraphData);
+            for (const playerData of playersGraphDataArray){
+                playerData.cycles = playerData.cycles
+                    .filter((cycle) => cycle.length === players.length)
+                    .map((cycle) => cycle.sort().join(''));
+            }
+
+            const [firstPlayerData, ...restPlayersData] = playersGraphDataArray;
+            for (const cycle of firstPlayerData.cycles){
+                const isCycleFoundInEveryPlayer = restPlayersData.every(
+                        (restPlayerData) => restPlayerData.cycles.some(
+                            (restCycle) => restCycle === cycle
+                        )
+                    );
+                if (isCycleFoundInEveryPlayer){
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function GroupBy(xs, fn){
+            return xs.reduce(function(rv, x) {
+                (rv[fn(x)] = rv[fn(x)] || []).push(x);
+                return rv;
+            }, {});
+        };
+
+
+    </script>
+</body>
+</html>
