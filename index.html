@@ -29,7 +29,21 @@
     </div>
 
     <script>
-        const players = [];
+        let players = [];
+        let round = 0;
+        let network = null;
+
+        const chooserElement = document.querySelector('#chooser');
+        const logElement = document.querySelector('#log');
+        const listElement = document.querySelector('#list');
+        const graphElement = document.querySelector('#graph');
+        const imgAElement = document.querySelector('#img-a');
+        const imgBElement = document.querySelector('#img-b');
+
+        // [from, to] inclusive
+        function RandInt(min, max){
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
 
         function DeepCopyPlayers(){
             const newPlayers = [];
@@ -44,8 +58,32 @@
             return newPlayers;
         }
 
+        function GroupBy(xs, fn){
+            return xs.reduce(function(rv, x) {
+                (rv[fn(x)] = rv[fn(x)] || []).push(x);
+                return rv;
+            }, {});
+        };
+
+        function GroupToArray(inputArray, getKey){
+            return inputArray.reduce(function(groupedArr, item){
+                const groupKey = getKey(item);
+                let group = groupedArr.find((g) => g.key === groupKey);
+                if (!group){
+                    group = {
+                        key: groupKey,
+                        values: []
+                    };
+                    groupedArr.push(group);
+                }
+                group.values.push(item);
+                return groupedArr;
+            }, []);
+        };
+
         function Log(text){
-            document.querySelector('#log').textContent += `${text}\n`;
+            // logElement.textContent += `${text}\n`;
+            console.log(text);
         }
 
         function LoadImageDataAsync(fileObject){ 
@@ -59,6 +97,13 @@
         }
 
         async function LoadImagesEventAsync(){
+            
+            // reset
+            players = [];
+            round = 0;
+            network = null;
+            chooserElement.style.visibility = 'visible';
+
             const fileObjects = [...document.querySelector('#input-images').files];
             const images = await Promise.all(fileObjects.map((file) => LoadImageDataAsync(file)));
 
@@ -70,20 +115,15 @@
                     worse: new Set(),
                 });
             });
-
             ShowScoreBoard();
             ShowGraph();
             ShowRanking(players[0], players[1]);
         }
 
         function ShowScoreBoard(){
-            const scoreBoard = document.querySelector('#list');
 
             // clean
-            let firstChild;
-            while (firstChild = scoreBoard.firstChild){
-                scoreBoard.removeChild(firstChild);
-            }
+            listElement.innerHTML = '';
 
             // sort players - let's just skip the heart of the algorithm for now 
             const copyOfPlayers = DeepCopyPlayers().sort((playerA, playerB) => {
@@ -103,7 +143,7 @@
                 listItem.appendChild(avatar);
                 listItem.appendChild(label);
                 
-                scoreBoard.appendChild(listItem);
+                listElement.appendChild(listItem);
             });
         }
 
@@ -156,7 +196,6 @@
         }
 
         function ShowGraph(){
-            const graph = document.querySelector('#graph');
             const nodes = [];
             const edges = [];
 
@@ -191,28 +230,25 @@
                 },
                 edges: {
                     color: 'lightgray'
-                }
+                },
             };
 
-            if (this.network){
-                this.network.setData(data);
+            if (network){
+                network.setData(data);
             }
             else {
-                this.network = new vis.Network(graph, data, options);
+                network = new vis.Network(graphElement, data, options);
             }
         }
 
         function ShowRanking(playerA, playerB){
-            const imgA = document.querySelector('#img-a');
-            const imgB = document.querySelector('#img-b');
+            imgAElement.src =  playerA.img;
+            imgAElement.onclick = () => UpdateRanking(playerA, playerB);
+            imgBElement.src =  playerB.img;
+            imgBElement.onclick = () => UpdateRanking(playerB, playerA);
 
-            imgA.src =  playerA.img;
-            imgA.onclick = () => UpdateRanking(playerA, playerB);
-            imgB.src =  playerB.img;
-            imgB.onclick = () => UpdateRanking(playerB, playerA);
-
-            this.round = (this.round || 0) + 1;
-            Log(`Show ranking for round: ${this.round}`);
+            round = round + 1;
+            Log(`Show ranking for round: ${round}`);
         }
 
         function UpdateRanking(winner, loser){
@@ -226,52 +262,59 @@
             if (isFullyOrdered){
                 ShowGraph();
                 ShowScoreBoard();
-                document.querySelector('#chooser').style.display = 'none';
+                chooserElement.style.visibility = 'hidden';
                 return;
             }
 
             // generate new ranking
+
+            // Create connection count property
             let playersCopy = players
                 .map((player) => {
                     return {
                         connectionCount: player.better.size + player.worse.size,
                         obj: player,
                     };
-                }).sort((playerA, playerB) => {
-                    return playerA.connectionCount - playerB.connectionCount;
                 });
 
-            const playersGroupedByConnectionCount = GroupBy(playersCopy, (player) => {
+            // Group players by that connection count and sort ASC
+            const playersGroupedByConnectionCount = GroupToArray(playersCopy, (player) => {
                 return player.connectionCount;
             });
-            let lowestCount = playersCopy[0].connectionCount;
-            for (const connectionCount in playersGroupedByConnectionCount){
-                if ((+connectionCount) < lowestCount && 
-                    playersGroupedByConnectionCount[connectionCount].length >= 2
-                ){
-                    lowestCount = +connectionCount;
-                }
-            }
-            playersCopy = playersCopy.filter((copy) => copy.connectionCount === lowestCount);
-            const randA = Math.floor(Math.random()*playersCopy.length);
-            const randB = Math.floor(Math.random()*playersCopy.length);
-            const nextA = players.find((player) => player.id === playersCopy[randA].obj.id);
-            const nextB = players.find((player) => player.id === playersCopy[randB].obj.id);
+            playersGroupedByConnectionCount.sort((groupA, groupB) => {
+                return groupA.key - groupB.key;
+            });
 
-            ShowRanking(nextA, nextB);
+            const possibleNextPlayers = [];
+
+            do {
+                // Get the group with the smallest connections
+                const currentGroup = playersGroupedByConnectionCount[0].values;
+
+                // Pick a player randomly
+                const randomIndex = RandInt(0, currentGroup.length-1);
+                const player = currentGroup[randomIndex].obj;
+                possibleNextPlayers.push(player);
+
+                // Delete player from group
+                currentGroup.splice(randomIndex, 1);
+
+                // If this group had only 2 members, skip the other one
+                if (currentGroup.length < 2){
+                    playersGroupedByConnectionCount.splice(0, 1);
+                }
+            } while (possibleNextPlayers.length < 2);
+
+            ShowRanking(possibleNextPlayers[0], possibleNextPlayers[1]);
             ShowGraph();
             ShowScoreBoard();
         }
 
         function IsFullyOrdered(){
-            // const isConnected = IsConnectedGraph();
-            const isFullCycle = IsFullCycle();
 
-            if (isFullCycle){
+            if (IsFullPathExists()){
                 return true;
             }
-
-            return false;
         }
 
         function IsConnectedGraph(){
@@ -279,7 +322,7 @@
                 all[curr.id] = false;
                 return all;
             }, {});
-            const visitPlayer = (player) => {
+            const visitPlayer = (player, visitedPlayers) => {
                 if (visitedPlayers[player.id]){
                     return;
                 }
@@ -287,16 +330,17 @@
                     visitedPlayers[player.id] = true;
                 }
 
+                const visitedPlayersCopy = Object.assign({}, visitedPlayers);
                 for (const betterId of player.better){
                     const betterPlayer = players.find((p) => p.id === betterId);
-                    visitPlayer(betterPlayer);
+                    visitPlayer(betterPlayer, visitedPlayersCopy);
                 }
                 for (const worseId of player.worse){
                     const worsePlayer = players.find((p) => p.id === worseId);
-                    visitPlayer(worsePlayer);
+                    visitPlayer(worsePlayer, visitedPlayersCopy);
                 }
             };
-            visitPlayer(players[0]);
+            visitPlayer(players[0], visitedPlayers);
             const isConnectedGraph = Object.values(visitedPlayers).every((v) => v);
             return isConnectedGraph;
         }
@@ -315,7 +359,7 @@
                     all[curr.id] = false;
                     return all;
                 }, {});
-                const visitPlayer = (visitedPlayer, chain) => {
+                const visitPlayer = (visitedPlayer, chain, visitedPlayers) => {
                     if (visitedPlayers[visitedPlayer.id]){
                         if (visitedPlayer.id === player.id){
                             playersGraphData[visitedPlayer.id].cycles.push(chain);
@@ -326,16 +370,17 @@
                         visitedPlayers[visitedPlayer.id] = true;
                     }
 
+                    const visitedPlayersCopy = Object.assign({}, visitedPlayers);
                     for (const betterId of visitedPlayer.better){
                         const betterPlayer = players.find((p) => p.id === betterId);
-                        visitPlayer(betterPlayer, [...chain, betterId]);
+                        visitPlayer(betterPlayer, [...chain, betterId], visitedPlayersCopy);
                     }
                     for (const worseId of visitedPlayer.worse){
                         const worsePlayer = players.find((p) => p.id === worseId);
-                        visitPlayer(worsePlayer, [...chain, worseId]);
+                        visitPlayer(worsePlayer, [...chain, worseId], visitedPlayersCopy);
                     }
                 };
-                visitPlayer(player, []);
+                visitPlayer(player, [], visitedPlayers);
             }
 
             const playersGraphDataArray = Object.values(playersGraphData);
@@ -359,14 +404,40 @@
             return false;
         }
 
-        function GroupBy(xs, fn){
-            return xs.reduce(function(rv, x) {
-                (rv[fn(x)] = rv[fn(x)] || []).push(x);
-                return rv;
-            }, {});
-        };
+        function IsFullPathExists(){
+            let fullPathFound = false;
+            for (const player of players){
+                const visitedPlayers = players.reduce((all, curr) => {
+                    all[curr.id] = false;
+                    return all;
+                }, {});
+                const visitPlayer = (visitedPlayer, visitedPlayers) => {
+                    if (visitedPlayers[visitedPlayer.id]){
+                        return;
+                    }
+                    else {
+                        visitedPlayers[visitedPlayer.id] = true;
+                    }
 
+                    if (Object.values(visitedPlayers).every((x) => x)){
+                        fullPathFound = true;
+                        return;
+                    }
 
+                    const visitedPlayersCopy = Object.assign({}, visitedPlayers);
+                    for (const betterId of visitedPlayer.better){
+                        if (fullPathFound){
+                            return;
+                        }
+                        const betterPlayer = players.find((p) => p.id === betterId);
+                        visitPlayer(betterPlayer, visitedPlayersCopy);
+                    }
+                };
+                visitPlayer(player, visitedPlayers);
+            }
+
+            return fullPathFound;
+        }
     </script>
 </body>
 </html>
