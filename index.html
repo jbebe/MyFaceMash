@@ -287,23 +287,66 @@
 
             const possibleNextPlayers = [];
 
-            do {
-                // Get the group with the smallest connections
-                const currentGroup = playersGroupedByConnectionCount[0].values;
+            const smallestConnectionCount = playersGroupedByConnectionCount[0].key;
+            Log(`Smallest connection count: ${smallestConnectionCount}`);
+            if (smallestConnectionCount < 1){
+                // If there are single components, compare them to others
+                do {
+                    // Get the group with the smallest connections
+                    const currentGroup = playersGroupedByConnectionCount[0].values;
 
-                // Pick a player randomly
-                const randomIndex = RandInt(0, currentGroup.length-1);
-                const player = currentGroup[randomIndex].obj;
-                possibleNextPlayers.push(player);
+                    // Pick a player randomly
+                    const randomIndex = RandInt(0, currentGroup.length-1);
+                    const player = currentGroup[randomIndex].obj;
+                    possibleNextPlayers.push(player);
 
-                // Delete player from group
-                currentGroup.splice(randomIndex, 1);
+                    // Delete player from group
+                    currentGroup.splice(randomIndex, 1);
 
-                // If this group had only 2 members, skip the other one
-                if (currentGroup.length < 2){
-                    playersGroupedByConnectionCount.splice(0, 1);
+                    // If this group had only 2 members, skip the other one
+                    if (currentGroup.length < 2){
+                        playersGroupedByConnectionCount.splice(0, 1);
+                    }
+                } while (possibleNextPlayers.length < 2);
+            }
+            else {
+                // Get the two best that are not yet connected and compare them
+
+                playersCopy = players
+                    .map((player) => {
+                        return {
+                            connectionCount: player.worse.size - player.better.size,
+                            obj: player,
+                        };
+                    });
+                playersCopy.sort((playerA, playerB) => {
+                    return playerB.connectionCount - playerA.connectionCount; // reverse order
+                });
+
+                let k = 1;
+                for (let i = 0; i < players.length - k; ++i){
+                    for (; k < players.length / 2; ++k){
+                        for (let j = 0; j < k; ++j){
+                            const pA = playersCopy[i].obj;
+                            const pB = playersCopy[i + k].obj;
+                            if (pA.better.has(pB.id) || pA.worse.has(pB.id)){
+                                continue;
+                            }
+                            Log(
+                            `Pushing ${playersCopy[i].obj.id.toString().slice(0,3)} (${playersCopy[i].connectionCount}) ` + 
+                            `and ${playersCopy[i+k].obj.id.toString().slice(0,3)} (${playersCopy[i+k].connectionCount})`);
+                            possibleNextPlayers.push(playersCopy[i].obj);
+                            possibleNextPlayers.push(playersCopy[i + k].obj);
+
+                            i = players.length; k = players.length; break;
+                        }
+                    }
                 }
-            } while (possibleNextPlayers.length < 2);
+
+                while (possibleNextPlayers.length < 2){
+                    possibleNextPlayers.push(players[Math.floor(Math.random()*players.length)]);
+                }
+            }
 
             ShowRanking(possibleNextPlayers[0], possibleNextPlayers[1]);
             ShowGraph();
